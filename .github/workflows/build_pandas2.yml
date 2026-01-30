@@ -24,33 +24,27 @@ jobs:
           # 清理一下，节省空间
           rm pandas-3.0.0.tar.gz
 
-      # 2. 配置 QEMU (ARM 模拟器)
+# 2. 配置 QEMU
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm
 
-      # 3. 使用 cibuildwheel 进行编译
+      # 3. 编译（增加了引号和显式的 Build 目标）
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.21.3
         env:
-          # 核心：指定架构为 armv7l
           CIBW_ARCHS_LINUX: armv7l
-          
-          # 针对 Ubuntu 18.04 (glibc 2.27)，使用 manylinux2014 镜像
-          # 如果 3.0.0 要求更高，cibuildwheel 会自动升级镜像
           CIBW_MANYLINUX_ARMV7L_IMAGE: manylinux2014
-          
-          # 跳过测试以节省时间（ARM 模拟运行测试极其缓慢）
+          # 必须加引号，否则 YAML 解析会出错
           CIBW_TEST_SKIP: "*"
+          # 明确指定要编译的 Python 版本（例如 3.10, 3.11, 3.12）
+          # 这能防止 cibuildwheel 尝试编译它认为“应该”编译的所有版本
+          CIBW_BUILD: "cp310-manylinux_armv7l cp311-manylinux_armv7l cp312-manylinux_armv7l"
           
-          # 限制编译线程：Pandas 3.0 编译非常吃内存，防止 GitHub Actions OOM 崩溃
           CIBW_ENVIRONMENT: >
             MAKEFLAGS="-j2" 
             NINJAFLAGS="-j2"
-          
-          # 如果需要针对特定的 Python 版本（如 3.10, 3.11, 3.12）
-          # CIBW_BUILD: "cp310-manylinux_armv7l cp311-manylinux_armv7l"
 
       # 4. 上传二进制文件
       - name: Upload Artifacts
