@@ -1,4 +1,4 @@
-name: Build Pandas 3.0.0 ARM32 2
+name: Build Pandas 3.0.0 ARM32
 
 on:
   workflow_dispatch: # 手动触发
@@ -12,41 +12,51 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1. 下载 Pandas 3.0.0 源码包 (sdist)
-# 修改后的步骤：使用 curl 直接下载，绕过 pip 的元数据构建过程
-      - name: Download Pandas 3.0.0 Source Directly
+      # 1. 下载 Pandas 3.0.0 源码并清理干扰配置
+      - name: Download and Clean Pandas 3.0.0 Source
         run: |
-          # 从 PyPI 直接获取源码包地址
+          # 下载源码
           curl -L https://files.pythonhosted.org/packages/source/p/pandas/pandas-3.0.0.tar.gz -o pandas-3.0.0.tar.gz
           tar -xzf pandas-3.0.0.tar.gz
-          # 将源码移动到当前工作目录
+          # 将源码内容移动到当前根目录
           cp -r pandas-3.0.0/* .
-          # 清理一下，节省空间
+          
+          # 【关键修复】删除 pyproject.toml 中 [tool.cibuildwheel] 及其之后的所有行
+          # 这样可以防止 Pandas 官方配置中的 "enable" 选项导致 cibuildwheel 崩溃
+          sed -i '/\[tool.cibuildwheel\]/,$d' pyproject.toml
+          
+          # 清理临时文件
           rm pandas-3.0.0.tar.gz
+          rm -rf pandas-3.0.0
 
-# 2. 配置 QEMU
+      # 2. 配置 QEMU (ARM 模拟器)
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm
 
-      # 3. 编译（增加了引号和显式的 Build 目标）
+      # 3. 使用 cibuildwheel 编译
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.21.3
         env:
+          # 目标架构
           CIBW_ARCHS_LINUX: armv7l
+          
+          # 针对 Ubuntu 18.04，使用 manylinux2014 保证 glibc 兼容性
           CIBW_MANYLINUX_ARMV7L_IMAGE: manylinux2014
-          # 必须加引号，否则 YAML 解析会出错
+          
+          # 必须加引号，跳过所有测试以节省极其有限的模拟编译时间
           CIBW_TEST_SKIP: "*"
-          # 明确指定要编译的 Python 版本（例如 3.10, 3.11, 3.12）
-          # 这能防止 cibuildwheel 尝试编译它认为“应该”编译的所有版本
+          
+          # 显式指定 Python 版本 (Pandas 3.0 需要 Python 3.10+)
           CIBW_BUILD: "cp310-manylinux_armv7l cp311-manylinux_armv7l cp312-manylinux_armv7l"
           
+          # 限制编译并行度，防止 7GB 内存溢出 (OOM)
           CIBW_ENVIRONMENT: >
             MAKEFLAGS="-j2" 
             NINJAFLAGS="-j2"
 
-      # 4. 上传二进制文件
+      # 4. 上传编译好的 .whl 文件
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
