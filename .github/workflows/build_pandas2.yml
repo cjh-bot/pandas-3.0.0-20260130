@@ -12,22 +12,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1. 下载源码并彻底禁用官方 cibuildwheel 配置
+      # 1. 下载源码并“物理消除”官方配置的影响
       - name: Download and Prepare Source
         run: |
           curl -L https://files.pythonhosted.org/packages/source/p/pandas/pandas-3.0.0.tar.gz -o pandas-3.0.0.tar.gz
           tar -xzf pandas-3.0.0.tar.gz
           cp -r pandas-3.0.0/* .
           
-          # 使用 Python 脚本安全地重命名 pyproject.toml 里的 tool.cibuildwheel 段落
-          # 这样可以完全无视官方的 skip/build 规则，改用我们环境变量定义的规则
+          # 强力手段：直接把 [tool.cibuildwheel] 整个段落从 pyproject.toml 中彻底删除
+          # 这样 cibuildwheel 启动时就只能依靠我们提供的环境变量
           python3 -c "
-          import os
-          content = open('pyproject.toml').read()
-          new_content = content.replace('[tool.cibuildwheel]', '[tool.cibuildwheel_disabled]')
+          lines = open('pyproject.toml').readlines()
           with open('pyproject.toml', 'w') as f:
-              f.write(new_content)
+              skip = False
+              for line in lines:
+                  if '[tool.cibuildwheel]' in line:
+                      skip = True
+                  if skip and line.startswith('[' ) and '[tool.cibuildwheel]' not in line:
+                      skip = False
+                  if not skip:
+                      f.write(line)
           "
+          # 打印最后几行确认一下，确保没有残留
+          echo "--- pyproject.toml 尾部内容 ---"
+          tail -n 20 pyproject.toml
           
           rm pandas-3.0.0.tar.gz
           rm -rf pandas-3.0.0
@@ -42,18 +50,21 @@ jobs:
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.21.3
         env:
-          # 强制指定架构
-          CIBW_ARCHS_LINUX: armv7l
+          # 【修改 1】使用通用的 ARCHS 变量，确保 cibuildwheel 强制开启该架构支持
+          CIBW_ARCHS: armv7l
           
-          # 手动指定完整的镜像路径，防止 cibuildwheel 找不到 armv7l 镜像
+          # 【修改 2】显式指定镜像，并确保不使用默认的 skip 逻辑
           CIBW_MANYLINUX_ARMV7L_IMAGE: quay.io/pypa/manylinux2014_armv7l
           
-          # 明确指定版本，Pandas 3.0 只支持 Python 3.11+
+          # 【修改 3】强制指定编译目标
           CIBW_BUILD: "cp311-manylinux_armv7l cp312-manylinux_armv7l"
           
-          # 强制不跳过任何内容
+          # 【修改 4】彻底清空跳过规则，防止 cibuildwheel 自动跳过 32 位系统
           CIBW_SKIP: ""
           CIBW_TEST_SKIP: "*"
+          
+          # 提高日志详细度，万一还报错，我们可以看到具体的过滤原因
+          CIBW_BUILD_VERBOSITY: 1
           
           # 内存保护
           CIBW_ENVIRONMENT: >
