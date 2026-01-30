@@ -12,47 +12,55 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1. 下载 Pandas 3.0.0 源码并暴力清理官方干扰配置
-      - name: Download and Clean Source
+      # 1. 下载源码并彻底禁用官方 cibuildwheel 配置
+      - name: Download and Prepare Source
         run: |
-          # 直接下载源码包
           curl -L https://files.pythonhosted.org/packages/source/p/pandas/pandas-3.0.0.tar.gz -o pandas-3.0.0.tar.gz
           tar -xzf pandas-3.0.0.tar.gz
           cp -r pandas-3.0.0/* .
           
-          # 【极其重要】删除源码里自带的 cibuildwheel 配置块
-          # 因为官方配置里写死了特定的 Python 版本和过滤条件，会和 ARM32 冲突
-          sed -i '/\[tool.cibuildwheel\]/,$d' pyproject.toml
+          # 使用 Python 脚本安全地重命名 pyproject.toml 里的 tool.cibuildwheel 段落
+          # 这样可以完全无视官方的 skip/build 规则，改用我们环境变量定义的规则
+          python3 -c "
+          import os
+          content = open('pyproject.toml').read()
+          new_content = content.replace('[tool.cibuildwheel]', '[tool.cibuildwheel_disabled]')
+          with open('pyproject.toml', 'w') as f:
+              f.write(new_content)
+          "
           
-          # 验证一下文件是否修改成功（可选）
-          tail -n 5 pyproject.toml
           rm pandas-3.0.0.tar.gz
+          rm -rf pandas-3.0.0
 
-      # 2. 配置 QEMU (ARM 模拟器)
+      # 2. 配置 QEMU
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm
 
-      # 3. 使用 cibuildwheel 编译
+      # 3. 编译
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.21.3
         env:
+          # 强制指定架构
           CIBW_ARCHS_LINUX: armv7l
-          # 针对 Ubuntu 18.04 (glibc 2.27)，必须使用 manylinux2014
-          CIBW_MANYLINUX_ARMV7L_IMAGE: manylinux2014
           
-          # 【修正】Pandas 3.0+ 不支持 Python 3.10，必须从 3.11 开始
+          # 手动指定完整的镜像路径，防止 cibuildwheel 找不到 armv7l 镜像
+          CIBW_MANYLINUX_ARMV7L_IMAGE: quay.io/pypa/manylinux2014_armv7l
+          
+          # 明确指定版本，Pandas 3.0 只支持 Python 3.11+
           CIBW_BUILD: "cp311-manylinux_armv7l cp312-manylinux_armv7l"
           
+          # 强制不跳过任何内容
+          CIBW_SKIP: ""
           CIBW_TEST_SKIP: "*"
           
-          # 内存保护：ARM 模拟器下编译大型 C++ 极其吃内存，限制并行数
+          # 内存保护
           CIBW_ENVIRONMENT: >
             MAKEFLAGS="-j2" 
             NINJAFLAGS="-j2"
 
-      # 4. 上传结果
+      # 4. 上传
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
