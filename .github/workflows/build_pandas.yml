@@ -1,0 +1,56 @@
+name: Build Pandas 3.0.0 ARM32
+
+on:
+  workflow_dispatch: # 手动触发
+
+jobs:
+  build_wheels:
+    name: Build pandas-3.0.0 for armv7l
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 1. 下载 Pandas 3.0.0 源码包 (sdist)
+      - name: Download Pandas 3.0.0 Source
+        run: |
+          pip download --no-binary :all: pandas==3.0.0
+          tar -xvf pandas-3.0.0.tar.gz
+          # 将源码移动到当前工作目录，方便 cibuildwheel 读取
+          cp -r pandas-3.0.0/* .
+
+      # 2. 配置 QEMU (ARM 模拟器)
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm
+
+      # 3. 使用 cibuildwheel 进行编译
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.21.3
+        env:
+          # 核心：指定架构为 armv7l
+          CIBW_ARCHS_LINUX: armv7l
+          
+          # 针对 Ubuntu 18.04 (glibc 2.27)，使用 manylinux2014 镜像
+          # 如果 3.0.0 要求更高，cibuildwheel 会自动升级镜像
+          CIBW_MANYLINUX_ARMV7L_IMAGE: manylinux2014
+          
+          # 跳过测试以节省时间（ARM 模拟运行测试极其缓慢）
+          CIBW_TEST_SKIP: "*"
+          
+          # 限制编译线程：Pandas 3.0 编译非常吃内存，防止 GitHub Actions OOM 崩溃
+          CIBW_ENVIRONMENT: >
+            MAKEFLAGS="-j2" 
+            NINJAFLAGS="-j2"
+          
+          # 如果需要针对特定的 Python 版本（如 3.10, 3.11, 3.12）
+          # CIBW_BUILD: "cp310-manylinux_armv7l cp311-manylinux_armv7l"
+
+      # 4. 上传二进制文件
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pandas-3.0.0-armv7l-wheels
+          path: ./wheelhouse/*.whl
