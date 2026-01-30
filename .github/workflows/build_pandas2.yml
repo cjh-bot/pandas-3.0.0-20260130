@@ -1,7 +1,7 @@
 name: Build Pandas 3.0.0 ARM32
 
 on:
-  workflow_dispatch: # 手动触发
+  workflow_dispatch: 
 
 jobs:
   build_wheels:
@@ -12,22 +12,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1. 下载 Pandas 3.0.0 源码并清理干扰配置
-      - name: Download and Clean Pandas 3.0.0 Source
+      # 1. 下载 Pandas 3.0.0 源码并暴力清理官方干扰配置
+      - name: Download and Clean Source
         run: |
-          # 下载源码
+          # 直接下载源码包
           curl -L https://files.pythonhosted.org/packages/source/p/pandas/pandas-3.0.0.tar.gz -o pandas-3.0.0.tar.gz
           tar -xzf pandas-3.0.0.tar.gz
-          # 将源码内容移动到当前根目录
           cp -r pandas-3.0.0/* .
           
-          # 【关键修复】删除 pyproject.toml 中 [tool.cibuildwheel] 及其之后的所有行
-          # 这样可以防止 Pandas 官方配置中的 "enable" 选项导致 cibuildwheel 崩溃
+          # 【极其重要】删除源码里自带的 cibuildwheel 配置块
+          # 因为官方配置里写死了特定的 Python 版本和过滤条件，会和 ARM32 冲突
           sed -i '/\[tool.cibuildwheel\]/,$d' pyproject.toml
           
-          # 清理临时文件
+          # 验证一下文件是否修改成功（可选）
+          tail -n 5 pyproject.toml
           rm pandas-3.0.0.tar.gz
-          rm -rf pandas-3.0.0
 
       # 2. 配置 QEMU (ARM 模拟器)
       - name: Set up QEMU
@@ -39,24 +38,21 @@ jobs:
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.21.3
         env:
-          # 目标架构
           CIBW_ARCHS_LINUX: armv7l
-          
-          # 针对 Ubuntu 18.04，使用 manylinux2014 保证 glibc 兼容性
+          # 针对 Ubuntu 18.04 (glibc 2.27)，必须使用 manylinux2014
           CIBW_MANYLINUX_ARMV7L_IMAGE: manylinux2014
           
-          # 必须加引号，跳过所有测试以节省极其有限的模拟编译时间
+          # 【修正】Pandas 3.0+ 不支持 Python 3.10，必须从 3.11 开始
+          CIBW_BUILD: "cp311-manylinux_armv7l cp312-manylinux_armv7l"
+          
           CIBW_TEST_SKIP: "*"
           
-          # 显式指定 Python 版本 (Pandas 3.0 需要 Python 3.10+)
-          CIBW_BUILD: "cp310-manylinux_armv7l cp311-manylinux_armv7l cp312-manylinux_armv7l"
-          
-          # 限制编译并行度，防止 7GB 内存溢出 (OOM)
+          # 内存保护：ARM 模拟器下编译大型 C++ 极其吃内存，限制并行数
           CIBW_ENVIRONMENT: >
             MAKEFLAGS="-j2" 
             NINJAFLAGS="-j2"
 
-      # 4. 上传编译好的 .whl 文件
+      # 4. 上传结果
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
